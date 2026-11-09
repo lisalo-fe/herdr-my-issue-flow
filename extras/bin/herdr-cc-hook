@@ -1,0 +1,205 @@
+#!/usr/bin/env python3
+"""Claude Code hook → Herdr 側欄 token（$prompt / $recap / $progress）。
+
+settings.json 掛在 UserPromptSubmit 與 Stop（async）。只在 Herdr pane 裡的互動 session 動作。
+關掉 Haiku recap：touch ~/.claude/herdr-sidebar/no-llm（改用回覆第一句）。
+
+兩種 Herdr：
+- 終端版 Herdr（TUI）：用 HERDR_PANE_ID 分 pane，寫 state/<pane>.json|.lines 並 report-metadata。
+- Herdr app（herdr-core 終端機，有 HC_TERMINAL_ID）：HERDR_PANE_ID 是 herdr-core 啟動時繼承的舊值，
+  每個終端機都一樣，所以改用 Claude 的 session_id 分：sessions/<session_id>.json|.lines。
+  My Issue Flow 的 Agent Session Footer 和 ccsl-wrap 都讀這份。
+"""
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+HOME = Path.home()
+BASE = HOME / ".claude" / "herdr-sidebar"
+STATE = BASE / "state"
+SESSIONS = BASE / "sessions"
+HERDR = os.environ.get("HERDR_BIN_PATH") or "herdr"
+SOURCE = "claude-sidebar"
+TICKET_RE = re.compile(r"FOOTBALL-(\d+)", re.I)
+AUTO_TURN_RE = re.compile(r"\s*<(agent-message|task-notification)\b")
+LABEL_RE = re.compile(r"^(結論|做法|下一步|建議|第[一二]行|recap|next)\s*[:：]\s*", re.I)
+
+RECAP_SYSTEM = (
+    "你把一輪問答濃縮成兩行繁體中文，給終端側欄顯示用，"
+    "不要標點結尾、不要引號、不要編號、不要前綴。"
+    "第一行：這輪的結論或做到哪，28 個字以內。"
+    "第二行：使用者下一步該做的一件事，16 個字以內，用動詞開頭（看／決定／回覆／跑／等），"
+    "沒有要使用者做的事就寫「等結果」。只輸出這兩行，不要加「結論：」「做法：」之類的標籤。"
+)
+
+
+def one_line(text, limit):
+    text = re.sub(r"<pasted_content[^>]*>.*?</pasted_content[^>]*>", " [貼上內容] ", text, flags=re.S)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
+def first_sentence(markdown):
+    for line in markdown.splitlines():
+        line = re.sub(r"^\s*(#+|>|[-*+]|\d+\.)\s*", "", line)
+        line = re.sub(r"[*`_]|\[([^\]]*)\]\([^)]*\)", lambda m: m.group(1) or "", line).strip()
+        if line and not line.startswith("|") and not line.startswith("```"):
+            return one_line(re.split(r"(?<=[。！？])", line)[0], 40)
+    return ""
+
+
+def report(pane, **tokens):
+    cmd = [HERDR, "pane", "report-metadata", pane, "--source", SOURCE]
+    for name, value in tokens.items():
+        cmd += ["--token", f"{name}={value}"] if value else ["--clear-token", name]
+    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+
+
+def save_lines(path, prompt, recap="", nxt=""):
+    # statusLine（~/.local/bin/ccsl-wrap）讀這個檔，在輸入框正下方顯示問題、recap、下一步各一行
+    prompt = "❯ " + one_line(prompt, 20) if prompt else ""
+    path.write_text(f"{prompt}\n{recap}\n{nxt}\n")
+
+
+def load_state(path):
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def write_state(path, state):
+    # 原子寫入：footer 每秒會讀，不能讀到寫一半的檔
+    tmp = path.with_name("." + path.name + ".tmp")
+    tmp.write_text(json.dumps(state, ensure_ascii=False))
+    tmp.replace(path)
+
+
+def find_ticket(state, cwd, pane):
+    if state.get("ticket"):
+        return state["ticket"]
+    # 同一個 worktree 可能開好幾個 session 做不同單，先看 Claude 自己取的 session 標題（只有終端版 Herdr 有 pane）
+    try:
+        title = json.loads(subprocess.run(
+            [HERDR, "pane", "get", pane], capture_output=True, text=True, timeout=3,
+        ).stdout)["result"]["pane"].get("terminal_title", "") if pane else ""
+        m = TICKET_RE.search(title)
+        if m:
+            return f"FOOTBALL-{m.group(1)}"
+    except (OSError, subprocess.SubprocessError, ValueError, KeyError):
+        pass
+    try:
+        branch = subprocess.run(
+            ["git", "-C", cwd, "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True, text=True, timeout=3,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    m = TICKET_RE.search(branch)
+    return f"FOOTBALL-{m.group(1)}" if m else None
+
+
+def progress_for(ticket):
+    return "▸ " + ticket.split("-")[1] if ticket else ""
+
+
+def llm_recap(prompt, answer):
+    if (BASE / "no-llm").exists():
+        return ("", "")
+    payload = f"使用者問：{prompt[:1500]}\n\nClaude 答：{answer[:5000]}"
+    try:
+        out = subprocess.run(
+            ["claude", "-p", "--model", "haiku", "--setting-sources", "local",
+             "--strict-mcp-config", "--tools", "", "--no-session-persistence",
+             "--disable-slash-commands", "--system-prompt", RECAP_SYSTEM],
+            input=payload, capture_output=True, text=True, timeout=60, cwd=BASE,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ("", "")
+    # Haiku 偶爾還是會加「結論：」「做法：」這種標籤，側欄只有 16 個字，直接剝掉
+    lines = [one_line(LABEL_RE.sub("", l.strip().strip("「」\"'")), 44)
+             for l in out.strip().splitlines() if l.strip()]
+    return (lines[0] if lines else "", lines[1] if len(lines) > 1 else "")
+
+
+def main():
+    terminal = os.environ.get("HC_TERMINAL_ID")  # Herdr app（herdr-core 終端機）
+    # Herdr app 裡的 HERDR_PANE_ID 是繼承來的舊 TUI pane，不能用，也不能 report 過去
+    pane = None if terminal else os.environ.get("HERDR_PANE_ID")
+    # 巢狀的 claude -p（含本 hook 自己叫的 Haiku）entrypoint 不是 cli，不能蓋掉 pane 的 token
+    if not (pane or terminal) or os.environ.get("CLAUDE_CODE_ENTRYPOINT") != "cli":
+        return
+    data = json.load(sys.stdin)
+    event = data.get("hook_event_name")
+    cwd = data.get("cwd") or os.getcwd()
+    sid = data.get("session_id") or ""
+    if terminal:
+        if not sid:
+            return
+        SESSIONS.mkdir(parents=True, exist_ok=True)
+        state_path = SESSIONS / f"{sid}.json"
+        lines_path = SESSIONS / f"{sid}.lines"
+    else:
+        safe_pane = pane.replace(":", "_")
+        STATE.mkdir(parents=True, exist_ok=True)
+        state_path = STATE / f"{safe_pane}.json"
+        lines_path = STATE / f"{safe_pane}.lines"
+    state = load_state(state_path)
+
+    def tui(**tokens):
+        if pane:
+            report(pane, **tokens)
+
+    if event == "UserPromptSubmit":
+        prompt = data.get("prompt") or ""
+        # Claude Code 自己起的回合（subagent 回報、背景任務通知）也會觸發，保留使用者真正問的那句
+        if AUTO_TURN_RE.match(prompt):
+            return
+        m = TICKET_RE.search(prompt)
+        if m:
+            state["ticket"] = f"FOOTBALL-{m.group(1)}"
+        if state.get("session_id") != sid:
+            state = {"ticket": state.get("ticket") if m else None}
+        state.update(session_id=sid, prompt=prompt, turn=time.time(), recap="", next="")
+        if terminal:
+            state.update(terminal=terminal, ticket=find_ticket(state, cwd, None))
+        write_state(state_path, state)
+        save_lines(lines_path, prompt)
+        tui(prompt="❯ " + one_line(prompt, 80), recap="", next="",
+            progress=progress_for(find_ticket(state, cwd, pane)))
+        return
+
+    if event == "Stop":
+        answer = data.get("last_assistant_message") or ""
+        if not answer:
+            return
+        turn = state.get("turn")
+        prompt = state.get("prompt") or ""
+        progress = progress_for(find_ticket(state, cwd, pane))
+        # 先放佔位，不用回覆第一句（常是開場白，不是結論）；關掉 Haiku 時才退回第一句
+        placeholder = first_sentence(answer) if (BASE / "no-llm").exists() else "整理中…"
+        save_lines(lines_path, prompt, "↳ " + placeholder)
+        if terminal:
+            write_state(state_path, {**state, "recap": placeholder, "next": "", "answered": time.time()})
+        tui(recap="↳ " + placeholder, next="", progress=progress)
+        recap, nxt = llm_recap(prompt, answer)
+        # Haiku 回來前使用者又送了新問題，就不要蓋掉
+        latest = load_state(state_path)
+        if recap and latest.get("turn") == turn:
+            save_lines(lines_path, prompt, "↳ " + recap, ("→ " + nxt) if nxt else "")
+            if terminal:
+                write_state(state_path, {**latest, "recap": recap, "next": nxt})
+            tui(recap="↳ " + recap, next=("→ " + nxt) if nxt else "")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as exc:  # hook 失敗不該打擾 session
+        BASE.mkdir(parents=True, exist_ok=True)
+        with open(BASE / "error.log", "a") as f:
+            f.write(f"{time.strftime('%F %T')} {exc!r}\n")

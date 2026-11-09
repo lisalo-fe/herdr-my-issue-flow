@@ -1,0 +1,35 @@
+{
+  "_doc": "My Issue Flow 的常用 skill 按鈕。點了會把 /<command> 打進目前的 Claude 輸入框（不會按 Enter）。順序 = 顯示順序；預設依 2026-10-10 ~ 11-09 實際呼叫次數排。",
+  "skills": [
+    {
+      "label": "上 UAT",
+      "command": "merge-uat",
+      "tip": "把 feature branch 部署到共用 uat（不汙染歷史）"
+    },
+    {
+      "label": "Copilot 意見",
+      "command": "gh-copilot-review",
+      "tip": "讀 PR 的 Copilot review，逐條驗證後依嚴重度回報"
+    },
+    {
+      "label": "開 Jira 單",
+      "command": "author-wap-jira-ticket",
+      "tip": "依 FE - WAP - 區塊 - 描述 格式起草 Jira 單"
+    },
+    {
+      "label": "Commit / PR",
+      "command": "git-workflows",
+      "tip": "commit、code review、開 PR 的流程"
+    },
+    {
+      "label": "開 worktree",
+      "command": "start-ticket",
+      "tip": "單號 → 閒置 slot 或新 worktree + 分支（origin/pre-release）+ 依賴 + Herdr space + 看板"
+    },
+    {
+      "label": "查 CMS",
+      "command": "check-cms",
+      "tip": "查詢或更新 CMS page / key、上傳圖片"
+    }
+  ]
+}

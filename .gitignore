@@ -1,0 +1,4 @@
+# Herdr app 啟動或 `herdr-app check` 時會自己寫進每個 mod 資料夾
+gpui-kit.d.ts
+jsconfig.json
+.DS_Store

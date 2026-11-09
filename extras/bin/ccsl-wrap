@@ -1,0 +1,39 @@
+#!/bin/bash
+# Claude Code statusLine wrapper:
+#   0. 把 statusLine JSON 存成 headless 資料，給 Herdr app 的 Agent Session Footer 讀
+#      （~/.config/herdr-app/mods/issue-session）：
+#        ~/.claude/herdr-sidebar/sessions/<session_id>.status.json  這個 session 的模型、context、effort
+#        ~/.claude/herdr-sidebar/sessions/term-<HC_TERMINAL_ID>.json  這個 herdr-core 終端機現在是哪個 session
+#   1. 終端版 Herdr（TUI）：herdr-cc-hook 寫的問題（藍）、recap（綠）、下一步（紅），各一行，貼在輸入框正下方
+#      Herdr app 的終端機（有 HC_TERMINAL_ID）什麼都不畫：My Issue Flow 上方的 session 列已經顯示。
+#      （那裡的 HERDR_PANE_ID 是 herdr-core 啟動時繼承的舊 TUI pane，每個終端機都一樣，不能拿來分 session。）
+#   2. ccstatusline，只在 toggle flag 存在時跑（ccsl / Herdr prefix+i 切換）
+input=$(cat)
+sessions="$HOME/.claude/herdr-sidebar/sessions"
+sid=$(printf '%s' "$input" | /usr/bin/jq -r '.session_id // empty' 2>/dev/null)
+if [ -n "$sid" ]; then
+  mkdir -p "$sessions"
+  now=$(date +%s)
+  printf '%s' "$input" | /usr/bin/jq -c --arg term "${HC_TERMINAL_ID:-}" --arg effort "${CLAUDE_EFFORT:-}" --argjson at "$now" \
+    '{session_id, at: $at, terminal: $term, effort_env: $effort, status: .}' \
+    > "$sessions/.$sid.status.tmp" 2>/dev/null && mv -f "$sessions/.$sid.status.tmp" "$sessions/$sid.status.json"
+  if [ -n "$HC_TERMINAL_ID" ]; then
+    printf '{"session_id":"%s","at":%s}\n' "$sid" "$now" > "$sessions/.term-$HC_TERMINAL_ID.tmp" &&
+      mv -f "$sessions/.term-$HC_TERMINAL_ID.tmp" "$sessions/term-$HC_TERMINAL_ID.json"
+  fi
+fi
+
+# Herdr app: the My Issue Flow header bar (mods/issue-session) shows model, context, effort,
+# question and answer, so the statusline draws nothing there. The JSON above is still saved.
+[ -n "$HC_TERMINAL_ID" ] && exit 0
+
+# Terminal Herdr (TUI): the hook's per-pane lines, as before.
+lines="$HOME/.claude/herdr-sidebar/state/${HERDR_PANE_ID//:/_}.lines"
+if [ -n "$HERDR_PANE_ID" ] && [ -f "$lines" ]; then
+  { read -r prompt; read -r recap; read -r next; } < "$lines"
+  [ -n "$prompt" ] && printf '\033[38;2;97;175;239m%s\033[0m\n' "$prompt"
+  [ -n "$recap" ] && printf '\033[38;2;152;195;121m%s\033[0m\n' "$recap"
+  [ -n "$next" ] && printf '\033[1;38;2;224;108;117m%s\033[0m\n' "$next"
+fi
+[ -f "$HOME/.claude/.statusline-on" ] || exit 0
+printf '%s' "$input" | "$HOME/.local/bin/ccstatusline"

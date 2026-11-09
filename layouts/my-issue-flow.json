@@ -1,0 +1,314 @@
+{
+  "id": "root",
+  "cloned_from": {
+    "name": "main",
+    "version": "0.1.14"
+  },
+  "type": "row",
+  "preview": "layouts/my-issue-flow.svg",
+  "titlebar": "none",
+  "traffic_lights": [
+    12,
+    16
+  ],
+  "theme": "graphite",
+  "colors": {
+    "accent": "#93a8c3",
+    "chrome": "#111317",
+    "canvas": "#0d0f12",
+    "background": "#16191d",
+    "surface": "#16191d",
+    "popover": "#1d2025",
+    "raised": "#22262c",
+    "hover": "#ffffff0b",
+    "selected": "#93a8c326",
+    "border": "#ffffff12",
+    "input": "#ffffff1f",
+    "selection": "#34404f",
+    "working": "#c8b98f"
+  },
+  "background": "canvas",
+  "terminal_padding": [
+    12,
+    10
+  ],
+  "divider": {
+    "width": 1,
+    "color": "border"
+  },
+  "children": [
+    {
+      "id": "sidebar",
+      "type": "column",
+      "size": {
+        "px": 268
+      },
+      "min": 44,
+      "max": 480,
+      "background": "chrome",
+      "resizable": false,
+      "children": [
+        {
+          "id": "brand",
+          "type": "block",
+          "size": {
+            "px": 46
+          },
+          "window_drag": true,
+          "content": {
+            "mod": "workspace-chrome"
+          }
+        },
+        {
+          "id": "sidebar-lists",
+          "type": "column",
+          "children": [
+            {
+              "id": "spaces",
+              "type": "block",
+              "size": {
+                "weight": 1
+              },
+              "min": 90,
+              "content": {
+                "mod": "issue-spaces"
+              }
+            },
+            {
+              "id": "agents",
+              "type": "block",
+              "size": {
+                "weight": 1
+              },
+              "min": 90,
+              "content": {
+                "mod": "agents"
+              }
+            }
+          ]
+        },
+        {
+          "id": "sidebar-footer",
+          "type": "block",
+          "size": {
+            "px": 69
+          },
+          "content": {
+            "mod": "workspace-chrome",
+            "props": {
+              "footer": true
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "work",
+      "type": "column",
+      "resizable": false,
+      "children": [
+        {
+          "id": "tabs",
+          "type": "block",
+          "size": {
+            "px": 42
+          },
+          "window_drag": true,
+          "content": {
+            "mod": "issue-tabs"
+          }
+        },
+        {
+          "id": "work-body",
+          "type": "row",
+          "padding": 8,
+          "gap": 8,
+          "children": [
+            {
+              "id": "work-main",
+              "type": "column",
+              "gap": 8,
+              "resizable": false,
+              "children": [
+                {
+                  "id": "session",
+                  "type": "block",
+                  "size": {
+                    "px": 62
+                  },
+                  "background": "surface",
+                  "radius": 8,
+                  "border": {
+                    "width": 1,
+                    "color": "border"
+                  },
+                  "content": {
+                    "mod": "issue-session"
+                  }
+                },
+                {
+                  "id": "main",
+                  "type": "block",
+                  "content": {
+                    "tab": "active",
+                    "pane": {
+                      "gap": 8,
+                      "radius": 8,
+                      "background": "background",
+                      "lone": true,
+                      "border": {
+                        "width": 1,
+                        "color": "border"
+                      },
+                      "focus": {
+                        "width": 1,
+                        "color": "accent"
+                      },
+                      "header": {
+                        "content": {
+                          "mod": "pane"
+                        },
+                        "height": 30,
+                        "position": "top",
+                        "reveal": "always"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "id": "panel",
+              "type": "column",
+              "hidden": true,
+              "size": {
+                "px": 368
+              },
+              "min": 280,
+              "max": 900,
+              "children": [
+                {
+                  "id": "panel-body",
+                  "type": "stack",
+                  "active": "files",
+                  "children": [
+                    {
+                      "id": "files",
+                      "type": "block",
+                      "content": {
+                        "mod": "files"
+                      }
+                    },
+                    {
+                      "id": "changes",
+                      "type": "block",
+                      "content": {
+                        "mod": "changes"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "status",
+          "type": "block",
+          "size": {
+            "px": 28
+          },
+          "content": {
+            "mod": "workspace-status"
+          }
+        }
+      ]
+    },
+    {
+      "id": "flow",
+      "type": "column",
+      "size": {
+        "px": 292
+      },
+      "min": 240,
+      "max": 440,
+      "background": "chrome",
+      "padding": 8,
+      "gap": 8,
+      "children": [
+        {
+          "id": "flow-usage",
+          "type": "block",
+          "size": {
+            "px": 162
+          },
+          "background": "surface",
+          "radius": 8,
+          "content": {
+            "mod": "issue-ai-usage"
+          }
+        },
+        {
+          "id": "flow-nginx",
+          "type": "block",
+          "size": {
+            "px": 118
+          },
+          "background": "surface",
+          "radius": 8,
+          "content": {
+            "mod": "issue-nginx",
+            "props": {
+              "block": "flow-nginx",
+              "height": 118,
+              "expanded": 340
+            }
+          }
+        },
+        {
+          "id": "flow-dev",
+          "type": "block",
+          "size": {
+            "px": 120
+          },
+          "background": "surface",
+          "radius": 8,
+          "content": {
+            "mod": "issue-dev-servers",
+            "props": {
+              "block": "flow-dev"
+            }
+          }
+        },
+        {
+          "id": "flow-prci",
+          "type": "block",
+          "size": {
+            "weight": 3
+          },
+          "min": 170,
+          "background": "surface",
+          "radius": 8,
+          "content": {
+            "mod": "issue-prci"
+          }
+        },
+        {
+          "id": "flow-skills",
+          "type": "block",
+          "size": {
+            "px": 170
+          },
+          "background": "surface",
+          "radius": 8,
+          "content": {
+            "mod": "issue-skills",
+            "props": {
+              "block": "flow-skills"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
