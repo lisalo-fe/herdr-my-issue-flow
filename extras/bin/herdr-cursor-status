@@ -1,0 +1,42 @@
+#!/bin/bash
+# Cursor CLI statusLine → Herdr Agent Session header (mods/issue-session).
+# Cursor's payload matches Claude's context_window, but effort is model.param_summary
+# ("500K High"), not effort.level. The header reads the file Claude's ccsl-wrap writes:
+#   ~/.claude/herdr-sidebar/sessions/<session_id>.status.json
+#   ~/.claude/herdr-sidebar/sessions/term-<HC_TERMINAL_ID>.json
+# Inside a Herdr terminal the status line stays blank; the header draws context and effort.
+input=$(cat)
+sessions="$HOME/.claude/herdr-sidebar/sessions"
+sid=$(printf '%s' "$input" | /usr/bin/jq -r '.session_id // empty' 2>/dev/null)
+case "$sid" in
+  ""|*[!A-Za-z0-9._-]*) ;;
+  *)
+    mkdir -p "$sessions"
+    now=$(date +%s)
+    printf '%s' "$input" | /usr/bin/jq -c --arg term "${HC_TERMINAL_ID:-}" --argjson at "$now" \
+      '{session_id, at: $at, terminal: $term, status: .}' \
+      > "$sessions/.$sid.status.tmp" 2>/dev/null && mv -f "$sessions/.$sid.status.tmp" "$sessions/$sid.status.json"
+    if [ -n "$HC_TERMINAL_ID" ]; then
+      printf '{"session_id":"%s","at":%s}\n' "$sid" "$now" > "$sessions/.term-$HC_TERMINAL_ID.tmp" &&
+        mv -f "$sessions/.term-$HC_TERMINAL_ID.tmp" "$sessions/term-$HC_TERMINAL_ID.json"
+    fi
+    ;;
+esac
+
+# Herdr already shows this on the session row under the tabs.
+[ -n "$HC_TERMINAL_ID" ] && exit 0
+
+printf '%s' "$input" | /usr/bin/jq -r '
+  def effort:
+    if (.effort.level? | type) == "string" and .effort.level != "" then .effort.level
+    else
+      ((.model.param_summary // "") | gsub("(?i)extra high"; "xhigh") | split(" ")
+        | map(select(test("^(?i)(low|medium|high|xhigh|max)$"))) | .[0] // "")
+      | ascii_downcase
+    end;
+  (.model.display_name // "Cursor") as $m
+  | (.context_window.used_percentage) as $p
+  | (if $p == null then "ctx —" else "ctx \($p | round)%" end) as $c
+  | (effort) as $e
+  | if $e == "" then "\($m)  \($c)" else "\($m)  \($c)  \($e)" end
+' 2>/dev/null

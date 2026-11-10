@@ -6,7 +6,7 @@ Herdr app 的一個版面，給 football-fe 開單、改 code、上 UAT 這條�
 
 - **左側**：Space 依 git repo 和 worktree 分組；每列都顯示 agent 狀態（處理中、需要你、完成）
 - **上方分頁列**：右邊有 Files、Changes、Git 三個按鈕，Git 會在右側面板打開 [rabeeh-ta/herdr-git-graph](https://github.com/rabeeh-ta/herdr-git-graph) 的 commit 分支圖（像 VS Code 的 Graph）
-- **中間**：上方是 Agent Session 列，顯示目前 Claude 的模型、context 用量、effort，以及上一個問題、結論和下一步；下面是終端機
+- **中間**：上方是 Agent Session 列，顯示目前 Claude、Cursor 或 Codex 的模型、context 用量、effort；Claude 另外顯示上一個問題、結論和下一步。下面是終端機
 - **右側**：AI 用量（Claude、Codex）、本機 Nginx、Dev Servers、PR / CI、常用 skill 按鈕
 
 在 Herdr app 0.1.14 上做的，macOS。
@@ -14,7 +14,7 @@ Herdr app 的一個版面，給 football-fe 開單、改 code、上 UAT 這條�
 ## 裝之前要知道
 
 - **Nginx、Dev Servers、PR / CI 面板假設 repo 放在 `~/football-fe-web-mvc`、`~/football-fe-dev-proxy`。** Dev Servers 還需要 `~/.local/bin/fe-up`、`fe-down`、`fe-ls`，這些指令都由 `extras/bin/fe-dev` 這一支腳本提供，安裝方式見下面的「Dev Servers 和 Nginx 的指令」。沒裝的話，Dev Servers 面板就不能啟動或停止 dev server；Nginx 面板會改跑 `football-fe-dev-proxy` 自己的 `scripts/`，照樣能用。
-- **上方 session 列要有內容，得另外裝 `herdr-cc-hook` 和 `ccsl-wrap`，再自己改 `~/.claude/settings.json`。** `ccsl-wrap` 負責模型、context、effort 和 AI 用量，會取代你原本的 statusLine。`herdr-cc-hook` 負責問答簡述，每回合會多呼叫一次 Haiku 整理結論；也可以改成直接用回覆的第一句，就不花用量。用下面的 prompt 安裝時，可以勾掉問答簡述、Git Graph、Skills 這三項。詳見「選用：讓 Agent Session 列有內容」。
+- **上方 session 列要有內容，得另外裝對應的腳本。** Claude 用 `ccsl-wrap`（模型、context、effort、用量）和 `herdr-cc-hook`（問答簡述）。Cursor 用 `herdr-cursor-status`，Codex 用 `herdr-codex-status`。`herdr-cc-hook` 每回合會多呼叫一次 Haiku 整理結論；也可以改成直接用回覆的第一句，就不花用量。用下面的 prompt 安裝時，可以勾掉問答簡述、Git Graph、Skills 這三項。詳見「選用：讓 Agent Session 列有內容」。
 - **Git Graph 是別人寫的 mod，而且能改 git。** 它是 [rabeeh-ta/herdr-git-graph](https://github.com/rabeeh-ta/herdr-git-graph)（MIT），不在這個 repo 裡，安裝時會從 GitHub 拿審查過的 v0.3.2（commit `2f4fe0f`），並關掉它的自動查新版。它不只是看圖：**雙擊分支標籤會直接 checkout**，右鍵選單的 reset、rebase、merge、push、刪遠端分支只隔一個對話框，按 Enter 就執行。在 football-fe 裡 commit、push 請用終端機：它沒有放寬 Herdr 的 30 秒時限，husky 的 pre-push 測試可能被中斷。
 - **Skills 面板的按鈕要換成你自己的 skill。** 6 個按鈕裡，`merge-uat`、`gh-copilot-review`、`start-ticket` 是作者個人的 skill，你應該沒有。`author-wap-jira-ticket`、`git-workflows`、`check-cms` 在 football-fe-web-mvc 的 `.cursor/skills/` 裡，只要你的 Claude Code 有接上就能用。
 
@@ -123,7 +123,7 @@ rsync -a --exclude gpui-kit.d.ts --exclude jsconfig.json mods/ "$APP/mods/"
 
 **安裝時有跳過功能的話，不要用上面的 `cp` 覆蓋 layout**，否則跳過的區塊會跑回來。請改跟 AI 說：「照 ~/.config/herdr-app/layouts/my-issue-flow.json 目前少掉的區塊，把 repo 的新版 layout 裁成一樣再裝」。
 
-有裝 `fe-dev` 或兩支 session 列腳本的話，也要把新版從 `extras/bin/` 複製到 `~/.local/bin/`。
+有裝 `fe-dev` 或 session 列腳本的話，也要把新版從 `extras/bin/` 複製到 `~/.local/bin/`。
 
 `git-graph` 不會跟著這個 repo 更新。它會停在鎖定的版本，自動查新版也是關的；要升級，請先審查新版的程式碼再換。
 
@@ -139,6 +139,8 @@ rsync -a --exclude gpui-kit.d.ts --exclude jsconfig.json mods/ "$APP/mods/"
 |---|---|---|
 | `herdr-cc-hook` | Claude Code 的 `UserPromptSubmit`、`Stop` hook | 記下你問的問題；回合結束後在背景呼叫 `claude -p --model haiku`，把這輪整理成「結論 / 下一步」兩行 |
 | `ccsl-wrap` | Claude Code 的 `statusLine` | 把模型、context、用量、專案資料夾存下來，大約每 2 秒一次 |
+| `herdr-cursor-status` | Cursor CLI 的 `statusLine` | 把模型、context 用量存下來。Effort 從 `model.param_summary`（例如 `500K High`）讀出 |
+| `herdr-codex-status` | Codex 的 `SessionStart`、`UserPromptSubmit`、`Stop` hook；session 列也會自己呼叫 | 從 rollout 讀最後一次輸入 token 佔 context window 的比例，以及那一輪的 reasoning effort |
 
 **裝之前要知道：**
 
@@ -151,9 +153,17 @@ rsync -a --exclude gpui-kit.d.ts --exclude jsconfig.json mods/ "$APP/mods/"
 
 ```bash
 mkdir -p ~/.local/bin
-cp extras/bin/herdr-cc-hook extras/bin/ccsl-wrap ~/.local/bin/
-chmod +x ~/.local/bin/herdr-cc-hook ~/.local/bin/ccsl-wrap
+cp extras/bin/herdr-cc-hook extras/bin/ccsl-wrap extras/bin/herdr-cursor-status extras/bin/herdr-codex-status ~/.local/bin/
+chmod +x ~/.local/bin/herdr-cc-hook ~/.local/bin/ccsl-wrap ~/.local/bin/herdr-cursor-status ~/.local/bin/herdr-codex-status
 ```
+
+Cursor CLI 要在 `~/.cursor/cli-config.json` 加上這段（已有別的設定就只加 `statusLine`，不要整份覆蓋）：
+
+```json
+"statusLine": { "type": "command", "command": "~/.local/bin/herdr-cursor-status", "padding": 0 }
+```
+
+Codex 要在 `~/.codex/hooks.json` 的 `SessionStart`、`UserPromptSubmit`、`Stop` 各加一條 command，指令是 `~/.local/bin/herdr-codex-status`，不要取代你原本的 hook。Codex 會要求你信任改過的 hooks.json。session 列也會依終端機所在資料夾自己讀 rollout，所以沒裝 hook 時，同一個資料夾只有一個 Codex 仍能顯示。
 
 接著**自己**把 `extras/claude-settings.snippet.json` 合併進 `~/.claude/settings.json`：
 
@@ -171,7 +181,7 @@ chmod +x ~/.local/bin/herdr-cc-hook ~/.local/bin/ccsl-wrap
 | PR / CI（`issue-prci`） | `gh` 已登入；repo 放在 `~/football-fe-web-mvc`。只讀不寫 |
 | Skills（`issue-skills`） | 按鈕只會把 `/<skill> ` 打進 Claude 的輸入框，不會按 Enter。清單在 `mods/issue-skills/skills.json`，改完面板會自己重新載入。預設的 `merge-uat`、`gh-copilot-review`、`start-ticket` 是作者個人的 skill，請換成你自己的 |
 | AI Usage（`issue-ai-usage`） | Claude 的用量來自 `ccsl-wrap` 存的資料，退而求其次讀 `~/.cache/ccstatusline/usage.json`；Codex 的用量讀 `~/.codex/sessions/`。只讀本機檔案，不連網路 |
-| Agent Session（`issue-session`）、Spaces（`issue-spaces`） | 上面那兩支選用腳本。沒裝 `herdr-cc-hook` 時，在版面的 `session` 區塊加上 `"props": {"recap": false}`、高度改成 34px，就只顯示第一行 |
+| Agent Session（`issue-session`）、Spaces（`issue-spaces`） | Claude 用上面的 `ccsl-wrap` 和 `herdr-cc-hook`；Cursor 用 `herdr-cursor-status`；Codex 用 `herdr-codex-status`。沒裝 `herdr-cc-hook` 時，在版面的 `session` 區塊加上 `"props": {"recap": false}`、高度改成 34px，就只顯示第一行。Cursor 和 Codex 沒有問答簡述 |
 | Git（`git-graph`，上方 Git 按鈕） | git。rabeeh-ta 的 git-graph 放在右側面板的 `graph` 那一頁，`issue-tabs` 看到這一頁才會畫 Git 按鈕。它跟著目前聚焦的終端機所在的 repo，有 All branches / Current 切換、diff 檢視和右鍵 git 操作，**會改 git**，見「裝之前要知道」 |
 
 路徑寫死在 mod 裡。你的 repo 放在別的地方的話，要改對應 mod 的 `main.js`。`issue-nginx` 可以用版面裡的 `props.dir` 指定 proxy repo 的位置。
