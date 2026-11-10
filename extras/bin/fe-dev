@@ -1,0 +1,270 @@
+#!/usr/bin/env bash
+# fe-up / fe-down / fe-ls — run one worktree's FE dev servers (Nuxt, plus the MVC rspack
+# build on request) in its own tmux session, so they start and stop together and never linger.
+# nginx-up / nginx-down — start or reload, and stop, the local nginx of football-fe-dev-proxy.
+#
+#   fe-up [ng|gh|ke] [--mvc] [--dry-run]   start (or re-attach) this worktree's session
+#   fe-down [<name>|all]                     stop this worktree's session, a named one, or all
+#   fe-ls [--brief]                          list sessions and who holds the dev ports
+#   nginx-up                                 take the current VPN DNS, then start or reload nginx
+#   nginx-down                               stop nginx
+#
+# Rules:
+# - One session per worktree: fe-main for the main repo, fe-<dir> for the others.
+# - MVC starts only with --mvc. ftl-proxy always serves <main repo>/build, so the MVC
+#   build runs only from the main repo, and only when no other MVC build is running.
+# - Nuxt runs the project's own `pnpm dev.uat.<country>`, which takes the www port
+#   (8001 for ng) when free and otherwise picks a free port itself; reach that one
+#   through www with the cookie dev_to_local_port=<port>.
+# - The proxy layer (nginx, ftl-proxy, dev-service) is started through
+#   football-fe-dev-proxy only when it is down, because that asks for sudo.
+# - nginx resolves the online hosts through the VPN DNS, so run nginx-up after every
+#   VPN switch.
+set -euo pipefail
+
+MAIN_REPO="${FE_REPO:-$HOME/football-fe-web-mvc}"
+PROXY_DIR="${FE_PROXY_DIR:-$HOME/football-fe-dev-proxy}"
+PREFIX="fe-"
+
+die() { echo "fe: $*" >&2; exit 1; }
+
+proxy_env() { grep -E "^$1=" "$PROXY_DIR/.env.local" 2>/dev/null | tail -1 | cut -d= -f2- || true; }
+FTL_PORT="$(proxy_env FTL_PROXY_PORT)"; FTL_PORT="${FTL_PORT:-9080}"
+DEV_SERVICE_PORT="$(proxy_env DEV_SERVICE_PORT)"; DEV_SERVICE_PORT="${DEV_SERVICE_PORT:-8787}"
+
+# Listening node ports as "port pid" lines.
+listen_ports() {
+  lsof -nP -iTCP -sTCP:LISTEN -a -c node 2>/dev/null |
+    awk 'NR > 1 { n = split($9, a, ":"); print a[n], $2 }' | sort -un
+}
+port_pid() { listen_ports | awk -v p="$1" '$1 == p { print $2; exit }'; }
+# Nuxt dev ports: the project's 8001–8100 range plus the old a1/a2/a3 slots.
+is_nuxt_port() { [ "$1" -ge 8001 ] && [ "$1" -le 8399 ]; }
+webpack_pid() { pgrep -f 'miaow-config/index' 2>/dev/null | head -1 || true; }
+
+# "main" for the main repo, the directory name for a worktree under football-fe-web-mvc-worktrees.
+path_label() {
+  case "$1" in
+    "$MAIN_REPO" | "$MAIN_REPO"/*) echo main ;;
+    */football-fe-web-mvc-worktrees/*)
+      local rest="${1#*/football-fe-web-mvc-worktrees/}"
+      echo "${rest%%/*}"
+      ;;
+    *) echo "?" ;;
+  esac
+}
+
+# Worktree label for a pid, from the repo path in its command line, else its cwd.
+pid_label() {
+  local path
+  path=$(ps -o command= -p "$1" 2>/dev/null | grep -oE '/[^ ]*football-fe-web-mvc[^ ]*' | head -1 || true)
+  [ -n "$path" ] || path=$(lsof -a -p "$1" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p')
+  path_label "$path"
+}
+
+repo_root() {
+  local root
+  root=$(git rev-parse --show-toplevel 2>/dev/null) || die "請在 football-fe-web-mvc 或它的 worktree 裡執行"
+  [ -f "$root/__nuxt3/package.json" ] || die "$root 不是 football-fe-web-mvc"
+  echo "$root"
+}
+
+session_for() {
+  if [ "$1" = "$MAIN_REPO" ]; then
+    echo "${PREFIX}main"
+  else
+    echo "${PREFIX}$(basename "$1" | tr '.:' '__')"
+  fi
+}
+
+proxy_up() {
+  local pid_file="$PROXY_DIR/run/nginx/nginx.pid"
+  [ -f "$pid_file" ] && ps -p "$(cat "$pid_file")" >/dev/null 2>&1 &&
+    [ -n "$(port_pid "$FTL_PORT")" ] && [ -n "$(port_pid "$DEV_SERVICE_PORT")" ]
+}
+
+attach() {
+  if [ -n "${TMUX:-}" ]; then
+    tmux switch-client -t "=$1"
+  elif [ -t 0 ] && [ -t 1 ]; then
+    tmux attach-session -t "=$1"
+  else
+    echo "用 tmux attach -t $1 打開畫面"
+  fi
+}
+
+cmd_up() {
+  local country=ng mvc=0 dry=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      ng | gh | ke) country=$1 ;;
+      --mvc) mvc=1 ;;
+      --dry-run) dry=1 ;;
+      *) die "用法：fe-up [ng|gh|ke] [--mvc] [--dry-run]" ;;
+    esac
+    shift
+  done
+
+  local root session
+  root=$(repo_root)
+  session=$(session_for "$root")
+  if tmux has-session -t "=$session" 2>/dev/null; then
+    echo "$session 已經在跑，直接接回去"
+    [ "$dry" = 1 ] || attach "$session"
+    return
+  fi
+
+  local mvc_line="不起（要 MVC 加 --mvc）" pid
+  if [ "$mvc" = 1 ]; then
+    if [ "$root" != "$MAIN_REPO" ]; then
+      mvc=0
+      mvc_line="不起：ftl-proxy 只讀主 repo 的 build，MVC 頁面仍是主 repo 的內容"
+    else
+      pid=$(webpack_pid)
+      if [ -n "$pid" ]; then
+        mvc=0
+        mvc_line="不起：已經有 MVC build（rspack）在跑（$(pid_label "$pid")，pid ${pid}）"
+      else
+        mvc_line="pnpm start main-wap-home"
+      fi
+    fi
+  fi
+
+  local label port holder www_port
+  label=$(path_label "$root")
+  while read -r port pid; do
+    [ -n "$port" ] && is_nuxt_port "$port" || continue
+    if [ "$(pid_label "$pid")" = "$label" ]; then
+      die "$label 已經有 Nuxt 在 $port 跑（不是 fe-up 起的）。要交給 fe-up 管，先關掉它：kill $pid"
+    fi
+  done < <(listen_ports)
+  case "$country" in ng) www_port=8001 ;; gh) www_port=8002 ;; ke) www_port=8003 ;; esac
+  local nuxt_cmd="NODE_USE_SYSTEM_CA=1 pnpm dev.uat.$country"
+
+  echo "worktree：$(path_label "$root")（${root}）"
+  echo "session： $session"
+  echo "MVC：     $mvc_line"
+  echo "Nuxt：    $nuxt_cmd"
+  holder=$(port_pid "$www_port")
+  if [ -z "$holder" ]; then
+    echo "          → port ${www_port}，https://www.encorebet.net/${country}/"
+  else
+    echo "          $www_port 被 $(pid_label "$holder") 佔著，專案會自己挑空的 port（看畫面上的 using port）"
+    echo "          → 在 www.encorebet.net 設 cookie dev_to_local_port=<那個 port> 才會走到這個 Nuxt，刪掉 cookie 就切回 $www_port"
+  fi
+
+  if [ "$dry" = 1 ]; then
+    proxy_up && echo "proxy：   nginx、ftl-proxy、dev-service 都在跑" || echo "proxy：   有服務沒在跑，實際執行時會先跑 dev-start（要 sudo）"
+    return
+  fi
+
+  if ! proxy_up; then
+    echo "proxy 有服務沒在跑，先執行 football-fe-dev-proxy 的 dev-start（要 sudo）"
+    bash "$PROXY_DIR/scripts/dev-start.sh"
+  fi
+
+  if [ "$mvc" = 1 ]; then
+    tmux new-session -d -s "$session" -c "$root"
+    tmux send-keys -t "=$session:" "pnpm start main-wap-home" Enter
+    tmux split-window -h -t "=$session:" -c "$root/__nuxt3"
+  else
+    tmux new-session -d -s "$session" -c "$root/__nuxt3"
+  fi
+  tmux send-keys -t "=$session:" "$nuxt_cmd" Enter
+  attach "$session"
+}
+
+# Node processes under the given pids (the dev servers inside the pane shells).
+node_descendants() {
+  local p k
+  for p in "$@"; do
+    for k in $(pgrep -P "$p" 2>/dev/null || true); do
+      case "$(ps -o comm= -p "$k" 2>/dev/null)" in *node*) echo "$k" ;; esac
+      node_descendants "$k"
+    done
+  done
+}
+
+stop_session() {
+  local s=$1 shells pane left i
+  tmux has-session -t "=$s" 2>/dev/null || { echo "$s 沒在跑"; return; }
+  shells=$(tmux list-panes -s -t "=$s" -F '#{pane_pid}')
+  for pane in $(tmux list-panes -s -t "=$s" -F '#{pane_id}'); do
+    tmux send-keys -t "$pane" C-c
+  done
+  for i in $(seq 1 20); do
+    left=$(node_descendants $shells)
+    [ -z "$left" ] && break
+    sleep 0.5
+  done
+  left=$(node_descendants $shells)
+  if [ -n "$left" ]; then
+    # shellcheck disable=SC2086
+    kill $left 2>/dev/null || true
+  fi
+  tmux kill-session -t "=$s"
+  echo "$s 已關閉"
+}
+
+cmd_down() {
+  local targets s
+  case "${1:-}" in
+    "") targets=$(session_for "$(repo_root)") ;;
+    all) targets=$(tmux list-sessions -F '#S' 2>/dev/null | grep "^$PREFIX" || true) ;;
+    *) targets="$PREFIX${1#"$PREFIX"}" ;;
+  esac
+  [ -n "$targets" ] || { echo "沒有 fe session 在跑"; return; }
+  for s in $targets; do stop_session "$s"; done
+}
+
+cmd_ls() {
+  local brief=0 port pid parts=()
+  [ "${1:-}" = "--brief" ] && brief=1
+  while read -r port pid; do
+    [ -n "$port" ] || continue
+    if is_nuxt_port "$port"; then
+      parts+=("$port $(pid_label "$pid")")
+    elif [ "$port" = 6006 ]; then
+      parts+=("storybook $(pid_label "$pid")")
+    fi
+  done < <(listen_ports)
+  pid=$(webpack_pid)
+  [ -n "$pid" ] && parts+=("mvc $(pid_label "$pid")")
+
+  if [ "$brief" = 1 ]; then
+    [ ${#parts[@]} -gt 0 ] && (IFS='|'; echo "${parts[*]}" | sed 's/|/ · /g')
+    return 0
+  fi
+  echo "fe sessions:"
+  tmux list-sessions -F '#S' 2>/dev/null | grep "^$PREFIX" | sed 's/^/  /' || echo "  （沒有）"
+  echo "dev servers:"
+  if [ ${#parts[@]} -gt 0 ]; then printf '  %s\n' "${parts[@]}"; else echo "  （沒有）"; fi
+}
+
+# setup-dns writes the first system nameserver (the VPN's while it is connected) to
+# .env.local; start-local-nginx regenerates the resolver include from it, then starts
+# nginx, or reloads it when it is already running.
+cmd_nginx_up() {
+  bash "$PROXY_DIR/scripts/setup-dns.sh"
+  bash "$PROXY_DIR/scripts/start-local-nginx.sh"
+}
+
+cmd_nginx_down() {
+  bash "$PROXY_DIR/scripts/stop-local-nginx.sh"
+}
+
+case "$(basename "$0")" in
+  fe-up) cmd_up "$@" ;;
+  fe-down) cmd_down "$@" ;;
+  fe-ls) cmd_ls "$@" ;;
+  nginx-up) cmd_nginx_up ;;
+  nginx-down) cmd_nginx_down ;;
+  *)
+    sub="${1:-}"
+    shift || true
+    case "$sub" in
+      up | down | ls) "cmd_$sub" "$@" ;;
+      *) die "用法：fe-dev up|down|ls" ;;
+    esac
+    ;;
+esac
