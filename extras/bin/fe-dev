@@ -34,7 +34,8 @@ DEV_SERVICE_PORT="$(proxy_env DEV_SERVICE_PORT)"; DEV_SERVICE_PORT="${DEV_SERVIC
 
 # Listening node ports as "port pid" lines.
 listen_ports() {
-  lsof -nP -iTCP -sTCP:LISTEN -a -c node 2>/dev/null |
+  # lsof exits 1 when nothing listens; under pipefail that would end the script silently.
+  { lsof -nP -iTCP -sTCP:LISTEN -a -c node 2>/dev/null || true; } |
     awk 'NR > 1 { n = split($9, a, ":"); print a[n], $2 }' | sort -un
 }
 port_pid() { listen_ports | awk -v p="$1" '$1 == p { print $2; exit }'; }
