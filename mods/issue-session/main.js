@@ -9,10 +9,13 @@
 //   sessions/<session_id>.json          last question / recap / next (herdr-cc-hook; its recap is
 //                                        the hook's existing Haiku call, nothing new here)
 // Anything missing, stale, or from another session shows N/A instead of old data.
+//
+// props: { recap?: false } — without herdr-cc-hook there is no question / recap to show:
+// row 2 is left out (give the block 34px instead of 62px).
 
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { home, theme, focused, panes, agents, readTextFile } from "herdr";
+import { home, theme, focused, panes, agents, readTextFile, props } from "herdr";
 import { tone, tint, MONO } from "./ui.js";
 
 const POLL = 1500;
@@ -145,6 +148,6 @@ export default class AgentSession extends View {
 
     return v_flex().id("root").size_full().px(14).py(6).gap(4).justify_center().min_w(0)
       .child(row1)
-      .child(row2);
+      .when(props()?.recap !== false, (el) => el.child(row2));
   }
 }

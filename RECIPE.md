@@ -9,7 +9,7 @@
 - 整體是 graphite 深色三欄：畫布 `#0d0f12`，左右欄 `#111317`，卡片 `#16191d`，選取底色 `#93a8c326`，重點色 `#93a8c3`，細邊框 `#ffffff12`。卡片圓角 8px，工作區卡片間距 8px；標題列不使用系統 titlebar。
 - 左欄寬 268px，上方 46px 是工作區 chrome；下方兩塊等權重且各至少 90px。Spaces 先列儲存庫群組，再列主 checkout 與 worktree；列中有分支、前後進度、agent 狀態與「需要你」。不在 git repo 的 space 另成一組。Agents 是內建 agent 清單。最底 69px 是工作區 footer。
 - 中欄上方 42px 是分頁：啟用項有淡藍底及 2px 底線，名稱最多顯示 170px，旁邊可有 agent 狀態及關閉鈕。下方工作區四周留 8px；先有 62px 的 session 卡，再是主要終端機 pane。session 第一列是模型、Context 進度條與百分比、Effort、session 名稱和終端機；第二列分半顯示淺藍色的問題與淺綠色的 recap。主要 pane 頂部常顯示 30px 的內建標頭，焦點邊框是重點色。底部 28px 是 workspace status。
-- 中欄右側的 Files / Changes 面板預設隱藏；打開時寬 368px，可在檔案與變更兩頁之間切換。
+- 中欄右側的 Files / Changes / Git 面板預設隱藏；打開時寬 368px，可在檔案、變更、commit 分支圖三頁之間切換。
 - 右欄寬 292px、內距 8px、卡片間距 8px。AI Usage 高 162px，顯示 Claude / Codex 的 5h 與每週用量、重置時間，Cursor 一列顯示「未連線」與用量頁連結。Local Nginx 初始高 118px，顯示 Running / Stopped / Error、程序與 DNS、提醒、Start / Restart / Stop。Dev Servers 初始高 120px，顯示目前 worktree、環境選擇、啟停鈕和其他執行中的服務。PR / CI 至少高 170px 且吃剩餘空間，顯示目前分支 PR 的 review / CI，再列自己的其他 open PR。Skills 初始高 170px，兩欄排列六個常用指令按鈕：上 UAT、Copilot 意見、開 Jira 單、Commit / PR、開 worktree、查 CMS。
 - 小標題用約 11.5px 中等字重，卡片內容多為 11–13px；PR 編號、port 與輸出採 JetBrains Mono。狀態色由主題提供：執行中用 `#93a8c3`，警告與錯誤用主題的對應色。
 
@@ -33,6 +33,8 @@
 - `issue-prci`：沒有 layout props；以 `git` 判斷目前 repo，使用 `gh pr list --author @me --state open --limit 10`、需要時 `gh pr view` 取得 PR / review / CI；`/usr/bin/open` 開連結。`issue-skills`：layout props 是 `{block: "flow-skills"}`，依 `skills.json` 的列數調整卡片；聚焦 Claude 終端機後，優先用剪貼簿配合 `herdr-app do terminal.paste` 輸入，失敗則逐鍵輸入，從不送 Enter。
 - Herdr API：`spaces()`、`panes()`、`agents()`、`focused()`、`layout()`、`window()`、`settings()`、`theme()`、`props()`、`home()`、`appHome()`、`shared()`、`setShared()`、`readTextFile()`、`watchFolder()`、`exec()`、`hc()`、`run()`、`openOverlay()`、`closeOverlay()`。使用的動作包括 `space.select` / `space.new`、`tab.select` / `tab.move` / `tab.rename` / `tab.close` / `tab.prev` / `tab.next`、`pane.focus`、`layout.select` / `layout.show` / `layout.hide` / `layout.resize`、`window.minimize` / `window.maximize` / `window.close`；`hc` 使用 `run`、`wait`、`read`、`rm`、`kill`、`keys`。外部程式還有 `git`、`gh`、`tmux`、`curl`、`ps`、`/bin/bash`、`/usr/bin/open`、`pbpaste`、`pbcopy`、`/usr/bin/jq`；`nginx-status.sh` 另用 `nc`、`pgrep`、`scutil` 等本機工具。
 - 選用 `extras/bin/herdr-cc-hook`：Claude Code 的 `UserPromptSubmit` / `Stop` hook，寫 session 的問題、recap、下一步；可呼叫 `claude -p --model haiku` 摘要，關閉時用回覆第一句。選用 `extras/bin/ccsl-wrap`：Claude statusLine wrapper，寫模型、context、effort 與 terminal-to-session 對應；在 Herdr app 終端機內不畫文字。兩者都寫到 `~/.claude/herdr-sidebar/sessions/`，供 session、spaces、AI usage 讀取。
+- 上方 Git 按鈕：右側面板的 stack `panel-body` 在 `files`、`changes` 後面多一頁 `{id: "graph", type: "block", content: {mod: "git-graph"}}`。`issue-tabs` 只有在 `panel-body` 有 `graph` 這一頁時，才在 Changes 後面畫「Git」按鈕（圖示 `mods/git-graph/icons/graph.svg`）；點擊跟 Files / Changes 一樣，用 `layout.select` 加 `layout.show` 打開，再點一次就收起；每個 space 記住自己開的是哪一頁。`git-graph` 是 rabeeh-ta/herdr-git-graph v0.3.2（commit `2f4fe0f`，MIT），不帶 props 時跟著聚焦的終端機找 repo；`update.js` 的 `CHECK` 改成 `false`，不自動查新版。
+- `issue-session` 的 props `{recap: false}`：不畫第二行（問題 / 結論），版面區塊改成 34px，給沒裝 `herdr-cc-hook` 的人用。
 
 ## Watch out
 
@@ -41,6 +43,7 @@
 - PR 其他清單只取自己的前 10 個 open PR，失敗檢查在目前 PR 卡最多列 4 個；Skills 目前有 6 項、每列 2 項。Nginx 只認 `~/football-fe-dev-proxy` 的 nginx master，不能把別的 nginx 程序當它。Dev Servers 的 Stop 只對有對應 `fe-` tmux session 的服務可用；來源不明的服務會停用該鈕。Switch 只對指定環境 port 及可停的來源服務顯示可操作狀態。
 - 目前沒有作用的控制項：Cursor 用量沒有實際進度條，只有「用量頁 ↗」；Skills 只輸入 slash command，不會替人執行。`issue-ai-usage` 的 Codex 週用量取決於本機 rate limit 資料是否有 secondary window；沒有時顯示空值。
 - 這份配置假設 `~/football-fe-web-mvc`、`~/football-fe-web-mvc-worktrees/`、`~/football-fe-dev-proxy`，以及 `127.0.0.1:8787` 的 dev-service、`~/.local/bin/nginx-up|down`、`fe-up|fe-down|fe-ls`、`gh` 登入、`tmux`。Nginx 操作可能要求 sudo 授權；`ccsl-wrap` 需要 `/usr/bin/jq`。選用 hook / statusLine 尚未安裝或 `~/.claude/herdr-sidebar/sessions/` 沒資料時，session 顯示 N/A，spaces 退回 live folder / space folder，AI Usage 可能顯示無資料。session 與 spaces 會忽略過期或不符 session id 的對應，不應拿舊資料填畫面。
+- `git-graph` 的資料夾名稱必須是 `git-graph`（它的 overlay 和圖示路徑寫死這個名字）。它能 checkout、reset、push，雙擊分支標籤會直接 checkout，而且 git 動作沒有放寬 Herdr 預設的 30 秒時限。
 
 ## Done when
 
@@ -50,3 +53,4 @@
 - 本機有用量資料時 AI Usage 顯示 Claude / Codex 的 5h、週用量與重置時間；點 Cursor 用量頁會開瀏覽器。Skills 點擊後在聚焦 Claude 終端機留下 slash command 與空格，沒有自動送出；blocked 時不可點。
 - Nginx 卡能區分 Running / Stopped、顯示 pid、:443 與 DNS 提醒；操作時開授權終端機、結束後再次檢查狀態，失敗輸出可展開。Dev Servers 能列本機服務、切換環境選擇、只允許有 `fe-up` session 的 Stop，Switch 要二次點擊。
 - 目前 worktree 有 PR 時 PR / CI 顯示 review 與成功、執行中、失敗數量；點 PR / 失敗檢查會開瀏覽器，點對應 worktree 箭頭會切換 space，↻ 會刷新。
+- 上方分頁列的 Changes 後面有 Git 按鈕；點了右側面板切到 git-graph，顯示聚焦 repo 的分支圖，再點一次收起。拿掉 `panel-body` 的 `graph` 那一頁後，Git 按鈕就不再出現。
