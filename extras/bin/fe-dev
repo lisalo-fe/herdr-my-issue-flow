@@ -32,9 +32,10 @@ proxy_env() { grep -E "^$1=" "$PROXY_DIR/.env.local" 2>/dev/null | tail -1 | cut
 FTL_PORT="$(proxy_env FTL_PROXY_PORT)"; FTL_PORT="${FTL_PORT:-9080}"
 DEV_SERVICE_PORT="$(proxy_env DEV_SERVICE_PORT)"; DEV_SERVICE_PORT="${DEV_SERVICE_PORT:-8787}"
 
-# Listening node ports as "port pid" lines.
+# Listening node ports as "port pid" lines. lsof exits 1 when nothing matches; that means
+# "no ports", not a failure, or pipefail + set -e would end fe-up silently.
 listen_ports() {
-  lsof -nP -iTCP -sTCP:LISTEN -a -c node 2>/dev/null |
+  { lsof -nP -iTCP -sTCP:LISTEN -a -c node 2>/dev/null || true; } |
     awk 'NR > 1 { n = split($9, a, ":"); print a[n], $2 }' | sort -un
 }
 port_pid() { listen_ports | awk -v p="$1" '$1 == p { print $2; exit }'; }
@@ -58,7 +59,7 @@ path_label() {
 pid_label() {
   local path
   path=$(ps -o command= -p "$1" 2>/dev/null | grep -oE '/[^ ]*football-fe-web-mvc[^ ]*' | head -1 || true)
-  [ -n "$path" ] || path=$(lsof -a -p "$1" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p')
+  [ -n "$path" ] || path=$(lsof -a -p "$1" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' || true)
   path_label "$path"
 }
 
@@ -93,7 +94,21 @@ attach() {
   fi
 }
 
+# Herdr app opened from Finder / Dock runs `bash -c` without reading ~/.zshrc, so an nvm node
+# and its pnpm are missing there. Then ask the login shell for its PATH, once, only for fe-up
+# (fe-ls runs on every panel refresh and needs no node). In a normal terminal this is skipped.
+ensure_node_path() {
+  command -v node >/dev/null 2>&1 && command -v pnpm >/dev/null 2>&1 && return 0
+  local p
+  p=$("${SHELL:-/bin/zsh}" -lic 'printf "__FE_PATH__%s\n" "$PATH"' </dev/null 2>/dev/null |
+    sed -n 's/^.*__FE_PATH__//p' | tail -1 || true)
+  [ -n "$p" ] && export PATH="$p"
+  command -v node >/dev/null 2>&1 || die "找不到 node（登入 shell 的 PATH 裡也沒有）"
+  command -v pnpm >/dev/null 2>&1 || die "找不到 pnpm（登入 shell 的 PATH 裡也沒有）"
+}
+
 cmd_up() {
+  ensure_node_path
   local country=ng mvc=0 dry=0
   while [ $# -gt 0 ]; do
     case "$1" in
