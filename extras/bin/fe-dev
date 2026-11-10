@@ -78,6 +78,11 @@ session_for() {
   fi
 }
 
+# Run a command in a new session, detached from this terminal. Closing a terminal sends SIGHUP
+# to its session (Herdr's Dev Servers removes fe-up's terminal once fe-up ends), and ftl-proxy
+# handles SIGHUP as "terminal closed" and quits even under nohup.
+detached() { perl -MPOSIX=setsid -e 'setsid() >= 0 or die "setsid: $!\n"; exec @ARGV or die "exec: $!\n"' "$@"; }
+
 proxy_up() {
   local pid_file="$PROXY_DIR/run/nginx/nginx.pid"
   [ -f "$pid_file" ] && ps -p "$(cat "$pid_file")" >/dev/null 2>&1 &&
@@ -175,7 +180,10 @@ cmd_up() {
 
   if ! proxy_up; then
     echo "proxy 有服務沒在跑，先執行 football-fe-dev-proxy 的 dev-start（要 sudo）"
-    bash "$PROXY_DIR/scripts/dev-start.sh"
+    # dev-start.sh = start.sh (DNS, ftl-proxy, dev-service) + start-local-nginx.sh (sudo, root daemon).
+    # The long-lived ftl-proxy / dev-service must not live in this terminal's session.
+    detached bash "$PROXY_DIR/scripts/start.sh" </dev/null
+    bash "$PROXY_DIR/scripts/start-local-nginx.sh"
   fi
 
   if [ "$mvc" = 1 ]; then
